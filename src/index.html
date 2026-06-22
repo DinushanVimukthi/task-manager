@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Manager</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════ LOGIN SCREEN ═══════════════════════ -->
+<div id="screen-login">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+        <rect width="32" height="32" rx="8" fill="#7c6af7"/>
+        <polyline points="8,17 13,22 24,11" stroke="white" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <span>Task Manager</span>
+    </div>
+    <h2>Welcome back</h2>
+    <p class="login-sub">Sign in to your workspace</p>
+    <form id="form-login">
+      <div class="field">
+        <label for="inp-email">Email</label>
+        <input id="inp-email" type="email" placeholder="you@example.com" autocomplete="email" required />
+      </div>
+      <div class="field">
+        <label for="inp-password">Password</label>
+        <div class="password-wrap">
+          <input id="inp-password" type="password" placeholder="••••••••" autocomplete="current-password" required />
+          <button type="button" id="btn-pw-toggle" class="btn-pw-toggle" tabindex="-1">
+            <svg id="eye-show" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg id="eye-hide" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="remember-row">
+        <label class="checkbox-label">
+          <input type="checkbox" id="chk-remember" />
+          <span class="checkmark"></span>
+          Remember me for 30 days
+        </label>
+      </div>
+      <div id="login-error" class="alert-error hidden"></div>
+      <button type="submit" class="btn-primary full-width">Sign in</button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════ APP SCREEN ═══════════════════════ -->
+<div id="screen-app" class="hidden">
+  <div class="app-layout">
+
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">
+          <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="8" fill="#7c6af7"/>
+            <polyline points="8,17 13,22 24,11" stroke="white" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <span>Task Manager</span>
+        </div>
+
+        <nav class="sidebar-nav">
+          <button class="nav-item active" data-view="tasks">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            All Tasks
+          </button>
+          <button class="nav-item" data-view="calendar">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Calendar
+          </button>
+        </nav>
+
+        <div class="sidebar-section">
+          <div class="sidebar-section-header">
+            <span>Projects</span>
+            <button id="btn-new-project" class="btn-icon-sm" title="New Project">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+          </div>
+          <div id="sidebar-project-list" class="sidebar-project-list"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="sidebar-user">
+          <div class="user-avatar" id="user-avatar">D</div>
+          <span id="user-label" class="user-email"></span>
+          <button id="btn-logout" class="btn-icon-sm" title="Logout">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Main ── -->
+    <div class="app-main">
+
+      <!-- Content Area -->
+      <div class="content-area" id="content-area">
+
+        <!-- All Tasks View -->
+        <div id="view-tasks" class="view">
+          <div class="view-header">
+            <div class="view-title-row">
+              <h2>All Tasks</h2>
+              <div class="view-mode-toggle">
+                <button class="mode-btn active" id="btn-mode-flat" title="Flat list">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg>
+                </button>
+                <button class="mode-btn" id="btn-mode-grouped" title="Group by project">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="5" rx="1"/><rect x="2" y="10" width="20" height="5" rx="1"/><rect x="2" y="17" width="20" height="5" rx="1"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="view-toolbar">
+              <div class="filter-bar" id="task-filter-bar">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="active">Active</button>
+                <button class="filter-btn" data-filter="completed">Completed</button>
+              </div>
+              <button id="btn-new" class="btn-primary btn-sm">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New Task
+              </button>
+            </div>
+          </div>
+          <div id="task-stats" class="stats-bar"></div>
+          <div id="task-list" class="task-list"></div>
+        </div>
+
+        <!-- Calendar View -->
+        <div id="view-calendar" class="view hidden">
+          <div class="view-header">
+            <div class="view-title-row">
+              <h2>Calendar</h2>
+              <div class="cal-nav">
+                <button id="cal-prev" class="btn-ghost">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <span id="cal-label" class="cal-label"></span>
+                <button id="cal-next" class="btn-ghost">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="cal-weekdays"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+          <div id="cal-grid" class="cal-grid"></div>
+          <div id="day-panel" class="day-panel hidden">
+            <div class="day-panel-header">
+              <span id="day-panel-title"></span>
+              <button id="btn-close-day" class="btn-ghost">✕</button>
+            </div>
+            <div id="day-panel-list"></div>
+          </div>
+        </div>
+
+        <!-- Project Detail View -->
+        <div id="view-project" class="view hidden">
+          <div id="project-view-header" class="project-view-header"></div>
+
+          <div class="proj-sections">
+
+            <!-- ── TASKS SECTION ── -->
+            <div class="proj-section" id="proj-section-tasks">
+              <div class="proj-section-hdr">
+                <div class="proj-section-title">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                  Tasks
+                </div>
+                <div class="proj-section-actions">
+                  <div class="filter-bar" id="project-filter-bar">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="active">Active</button>
+                    <button class="filter-btn" data-filter="completed">Done</button>
+                  </div>
+                  <button id="btn-add-project-task" class="btn-primary btn-sm">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add Task
+                  </button>
+                </div>
+              </div>
+              <div class="proj-section-body">
+                <div id="folder-panel" class="folder-panel">
+                  <div class="folder-panel-hdr">
+                    <span>Folders</span>
+                    <button id="btn-add-root-folder" class="btn-icon-sm" title="New folder">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </button>
+                  </div>
+                  <div id="folder-tree" class="folder-tree"></div>
+                </div>
+                <div class="proj-task-area">
+                  <div id="project-task-list" class="task-list"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── BOARDS SECTION ── -->
+            <div class="proj-section" id="proj-section-boards">
+              <div class="proj-section-hdr">
+                <div class="proj-section-title">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+                  Boards
+                </div>
+                <div class="proj-section-actions" id="board-section-actions">
+                  <select id="board-selector" class="select-field board-sel"></select>
+                  <button id="btn-new-board" class="btn-secondary btn-sm">+ New Board</button>
+                  <button id="btn-rename-board" class="btn-ghost btn-sm">Rename</button>
+                  <button id="btn-delete-board" class="btn-danger btn-sm">Delete</button>
+                  <span class="toolbar-sep"></span>
+                  <button id="btn-add-col" class="btn-primary btn-sm">+ Column</button>
+                </div>
+              </div>
+              <div class="proj-section-board-body">
+                <div id="board-canvas" class="board-canvas"></div>
+                <div id="board-empty" class="board-empty hidden">
+                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+                  <p>No boards yet. Create one to organize tasks visually.</p>
+                  <button id="btn-create-first-board" class="btn-primary">Create First Board</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div><!-- /content-area -->
+
+      <!-- Task Detail Panel -->
+      <div id="task-detail" class="task-detail">
+        <div class="detail-toolbar">
+          <button id="btn-close-detail" class="btn-ghost btn-icon-sm">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div class="detail-actions">
+            <button id="btn-edit-detail" class="btn-secondary btn-sm">Edit</button>
+            <button id="btn-delete-detail" class="btn-danger btn-sm">Delete</button>
+          </div>
+        </div>
+        <div id="detail-body" class="detail-body"></div>
+      </div>
+
+    </div><!-- /app-main -->
+  </div><!-- /app-layout -->
+</div><!-- /screen-app -->
+
+<!-- ═══════════════════════ TASK MODAL ═══════════════════════ -->
+<div id="modal-overlay" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h3 id="modal-title">New Task</h3>
+        <span id="field-task-id" class="task-id-badge" style="display:none"></span>
+      </div>
+      <button id="btn-close-modal" class="btn-icon-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <form id="form-task">
+      <div class="field">
+        <label for="inp-title">Title <span class="required">*</span></label>
+        <input id="inp-title" type="text" placeholder="What needs to be done?" required />
+      </div>
+      <div class="field">
+        <label for="inp-project-sel">Project</label>
+        <select id="inp-project-sel" class="select-field">
+          <option value="">No Project</option>
+        </select>
+      </div>
+      <div class="field" id="placement-field" style="display:none">
+        <label>Place In <span class="field-required-note">folder or board column required</span></label>
+        <div class="placement-row">
+          <div class="placement-opt">
+            <span class="placement-opt-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              Folder
+            </span>
+            <select id="inp-folder-sel" class="select-field">
+              <option value="">No Folder</option>
+            </select>
+          </div>
+          <div class="placement-or">or</div>
+          <div class="placement-opt">
+            <span class="placement-opt-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+              Board Column
+            </span>
+            <select id="inp-board-col-sel" class="select-field">
+              <option value="">No Column</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Priority</label>
+        <div class="priority-group">
+          <button type="button" class="priority-btn" data-p="low">Low</button>
+          <button type="button" class="priority-btn active" data-p="medium">Medium</button>
+          <button type="button" class="priority-btn" data-p="high">High</button>
+        </div>
+      </div>
+      <div class="fields-row">
+        <div class="field">
+          <label for="inp-due">Due Date</label>
+          <input id="inp-due" type="datetime-local" class="select-field" />
+        </div>
+        <div class="field">
+          <label for="inp-notify">Notify Before</label>
+          <select id="inp-notify" class="select-field">
+            <option value="15">15 min</option>
+            <option value="30">30 min</option>
+            <option value="60" selected>1 hour</option>
+            <option value="120">2 hours</option>
+            <option value="360">6 hours</option>
+            <option value="1440">1 day</option>
+            <option value="10080">1 week</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <div class="md-tabs">
+          <button type="button" class="md-tab active" data-mode="write">Write</button>
+          <button type="button" class="md-tab" data-mode="preview">Preview</button>
+        </div>
+        <textarea id="inp-desc" class="md-editor" rows="5" placeholder="Description (markdown supported)…"></textarea>
+        <div id="md-preview" class="md-preview hidden"></div>
+      </div>
+      <div id="task-form-error" class="alert-error hidden"></div>
+      <div class="form-actions">
+        <button type="button" id="btn-cancel" class="btn-secondary">Cancel</button>
+        <button type="submit" id="btn-submit" class="btn-primary">Add Task</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════ PROJECT MODAL ═══════════════════════ -->
+<div id="project-modal-overlay" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h3 id="project-modal-title">New Project</h3>
+      <button id="btn-close-project-modal" class="btn-icon-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <form id="form-project">
+      <div class="field">
+        <label for="inp-project-name">Name <span class="required">*</span></label>
+        <input id="inp-project-name" type="text" placeholder="Project name" required />
+      </div>
+      <div class="field">
+        <label for="inp-project-desc">Description</label>
+        <textarea id="inp-project-desc" rows="2" placeholder="What is this project about?"></textarea>
+      </div>
+      <div class="field">
+        <label>Color</label>
+        <div class="color-swatches" id="color-swatches"></div>
+      </div>
+      <div id="project-form-error" class="alert-error hidden"></div>
+      <div class="form-actions">
+        <button type="button" id="btn-cancel-project" class="btn-secondary">Cancel</button>
+        <button type="submit" id="btn-submit-project" class="btn-primary">Create Project</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════ COLUMN MODAL ═══════════════════════ -->
+<div id="col-modal-overlay" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h3 id="col-modal-title">New Column</h3>
+      <button id="btn-close-col-modal" class="btn-icon-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <form id="form-col">
+      <div class="field">
+        <label for="inp-col-name">Column Name <span class="required">*</span></label>
+        <input id="inp-col-name" type="text" placeholder="e.g. Review" required />
+      </div>
+      <div class="field">
+        <label>Color</label>
+        <div class="color-swatches" id="col-color-swatches"></div>
+      </div>
+      <div id="col-form-error" class="alert-error hidden"></div>
+      <div class="form-actions">
+        <button type="button" id="btn-cancel-col" class="btn-secondary">Cancel</button>
+        <button type="submit" id="btn-submit-col" class="btn-primary">Add Column</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="main.js"></script>
+</body>
+</html>

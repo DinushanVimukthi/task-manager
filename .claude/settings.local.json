@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go version *)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(where rustup *)",
+      "Skill(run)",
+      "Bash(rustup --version)",
+      "PowerShell(rustc *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(cargo *)",
+      "PowerShell(npm run *)",
+      "PowerShell(Stop-Process *)",
+      "Bash(cargo build *)",
+      "Bash(~/.cargo/bin/cargo build *)",
+      "Bash(~/.cargo/bin/cargo check *)"
+    ]
+  }
+}

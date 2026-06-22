@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Task Manager",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default"
+  ]
+}
