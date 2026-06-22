@@ -1,26 +1,50 @@
 const { invoke } = window.__TAURI__.core;
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let tasks = [], projects = [], folders = [], boards = [], allBoards = [];
-let filter = 'all', projectFilter = 'all';
+let tasks = [], projects = [], allBoards = [], allFolders = {};
+let filter = 'all', folderFilter = 'all';
 let priority = 'medium';
 let editId = null, sessionToken = null;
 let calYear = new Date().getFullYear(), calMonth = new Date().getMonth(), calSelected = null;
-let currentView = 'tasks', currentProjectId = null;
+let currentView = 'tasks';       // 'tasks'|'calendar'|'project-overview'|'folder-tasks'|'board-view'
+let currentProjectId = null;
+let currentFolderId = null;
+let currentBoardId = null;
 let taskViewMode = 'flat';
 let selectedTaskId = null;
 let editingProjectId = null, projectColor = '#7c6af7';
 let expandedProjects = new Set();
 let modalDefaultProjectId = null, modalDefaultFolderId = null, modalDefaultColumnId = null;
-let currentFolderId = null;   // null = show all tasks in project
-let currentBoardId  = null;
-let editingProjectTabId = 'tasks';
 let colColor = '#6b7280', editingColId = null;
 
 const PROJECT_COLORS = ['#7c6af7','#60a5fa','#4ade80','#fbbf24','#f87171','#f472b6','#fb923c','#2dd4bf'];
+const PRIORITY_COLORS = { high: '#f87171', medium: '#fbbf24', low: '#4ade80' };
 
 const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// ─── Custom confirm dialog ────────────────────────────────────────────────────
+let _confirmResolve = null;
+function showConfirm(message, { title = 'Are you sure?', okLabel = 'Delete', variant = 'danger' } = {}) {
+  return new Promise(resolve => {
+    _confirmResolve = resolve;
+    const ov = $('confirm-overlay');
+    $('confirm-title').textContent = title;
+    $('confirm-message').textContent = message;
+    $('confirm-ok').textContent = okLabel;
+    $('confirm-ok').className = variant === 'warn' ? 'btn-secondary' : 'btn-danger';
+    const wrap = $('confirm-icon-wrap');
+    wrap.className = 'confirm-icon-wrap' + (variant === 'warn' ? ' warn' : '');
+    $('confirm-icon-danger').classList.toggle('hidden', variant === 'warn');
+    $('confirm-icon-warn').classList.toggle('hidden', variant !== 'warn');
+    ov.classList.remove('hidden');
+    $('confirm-ok').focus();
+  });
+}
+function _closeConfirm(result) {
+  $('confirm-overlay').classList.add('hidden');
+  if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+}
 
 function fmtDateTime(iso) {
   if (!iso) return '';
@@ -85,38 +109,51 @@ function showApp(user) {
 async function loadAll() {
   [tasks, projects] = await Promise.all([invoke('get_tasks'), invoke('get_projects')]);
   if (projects.length) {
-    const perProject = await Promise.all(projects.map(p => invoke('get_boards', { projectId: p.id })));
-    allBoards = perProject.flat();
+    const [boardsArr, foldersArr] = await Promise.all([
+      Promise.all(projects.map(p => invoke('get_boards', { projectId: p.id }))),
+      Promise.all(projects.map(p => invoke('get_folders', { projectId: p.id }))),
+    ]);
+    allBoards = boardsArr.flat();
+    allFolders = {};
+    for (let i = 0; i < projects.length; i++) allFolders[projects[i].id] = foldersArr[i];
   } else {
-    allBoards = [];
+    allBoards = []; allFolders = {};
   }
   renderSidebarProjects(); populateProjectSelector(); renderCurrentView();
 }
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
-async function navigate(view, pid=null) {
-  currentView=view; currentProjectId=pid; selectedTaskId=null; closeDetailPanel();
-  document.querySelectorAll('.nav-item').forEach(i => i.classList.toggle('active', i.dataset.view===view && !pid));
-  document.querySelectorAll('.project-nav-item').forEach(i => i.classList.toggle('active', Number(i.dataset.pid)===pid));
-  $('view-tasks').classList.toggle('hidden', view!=='tasks');
-  $('view-calendar').classList.toggle('hidden', view!=='calendar');
-  $('view-project').classList.toggle('hidden', view!=='project');
+const ALL_VIEW_IDS = ['view-tasks','view-calendar','view-project-overview','view-folder-tasks','view-board'];
+const VIEW_ID_MAP = {
+  'tasks':            'view-tasks',
+  'calendar':         'view-calendar',
+  'project-overview': 'view-project-overview',
+  'folder-tasks':     'view-folder-tasks',
+  'board-view':       'view-board',
+};
+
+async function navigate(view, pid, fid, bid) {
+  currentView = view;
+  if (pid != null) currentProjectId = pid;
+  if (fid != null) currentFolderId = fid;
+  if (bid != null) currentBoardId = bid;
+  selectedTaskId = null; closeDetailPanel();
+  document.querySelectorAll('.nav-item').forEach(i =>
+    i.classList.toggle('active', i.dataset.view === view && pid == null)
+  );
+  ALL_VIEW_IDS.forEach(id => { const e = $(id); if (e) e.classList.add('hidden'); });
+  const target = VIEW_ID_MAP[view] ? $(VIEW_ID_MAP[view]) : null;
+  if (target) target.classList.remove('hidden');
+  renderSidebarProjects();
   await renderCurrentView();
 }
+
 async function renderCurrentView() {
-  if (currentView==='tasks')    { renderTasks(); renderStats(); }
-  if (currentView==='calendar') renderCalendar();
-  if (currentView==='project' && currentProjectId) await renderProjectView(currentProjectId);
-}
-async function navigateToBoard(pid, bid) {
-  currentBoardId = bid;
-  expandedProjects.add(pid);
-  await navigate('project', pid);
-  switchProjTab('board');
-  const sel = $('board-selector');
-  if (sel) sel.value = String(bid);
-  const b = boards.find(x => x.id === bid);
-  if (b) renderBoard(b);
+  if (currentView === 'tasks')            { renderTasks(); renderStats(); }
+  else if (currentView === 'calendar')    renderCalendar();
+  else if (currentView === 'project-overview' && currentProjectId) renderProjectOverview(currentProjectId);
+  else if (currentView === 'folder-tasks' && currentFolderId)      renderFolderView(currentFolderId);
+  else if (currentView === 'board-view'   && currentBoardId)       await renderBoardView(currentBoardId);
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -126,31 +163,20 @@ function renderSidebarProjects() {
     el.innerHTML = '<div style="padding:6px 10px;font-size:12px;color:var(--text2)">No projects yet</div>';
     return;
   }
-  // Auto-expand the active project
   if (currentProjectId) expandedProjects.add(currentProjectId);
 
   el.innerHTML = projects.map(p => {
     const taskCount = tasks.filter(t => t.project_id === p.id).length;
     const projBoards = allBoards.filter(b => b.project_id === p.id);
-    const isActive = currentProjectId === p.id;
+    const projFolders = (allFolders[p.id] || []).filter(f => !f.parent_id);
     const isExpanded = expandedProjects.has(p.id);
+    const isProjActive = currentProjectId === p.id && currentView === 'project-overview';
 
-    const boardsHtml = (isExpanded && projBoards.length) ? `
-      <div class="project-nav-boards">
-        ${projBoards.map(b => `
-          <button class="board-nav-item${(isActive && currentBoardId === b.id) ? ' active' : ''}" data-pid="${p.id}" data-bid="${b.id}">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="5" height="18" rx="1"/>
-              <rect x="10" y="3" width="5" height="12" rx="1"/>
-              <rect x="17" y="3" width="5" height="8" rx="1"/>
-            </svg>
-            <span class="board-nav-name">${esc(b.name)}</span>
-          </button>`).join('')}
-      </div>` : '';
+    const innerHtml = isExpanded ? buildProjInner(p.id, projFolders, projBoards) : '';
 
     return `<div class="sidebar-project-group">
-      <div class="project-nav-row${isActive ? ' active' : ''}">
-        <button class="project-nav-chevron${isExpanded ? ' expanded' : ''}" data-pid="${p.id}" title="Toggle boards">
+      <div class="project-nav-row${isProjActive ? ' active' : ''}">
+        <button class="project-nav-chevron${isExpanded ? ' expanded' : ''}" data-pid="${p.id}">
           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
         <button class="project-nav-item" data-pid="${p.id}">
@@ -159,29 +185,117 @@ function renderSidebarProjects() {
           ${taskCount ? `<span class="project-nav-count">${taskCount}</span>` : ''}
         </button>
       </div>
-      ${boardsHtml}
+      ${innerHtml}
     </div>`;
   }).join('');
 
-  el.querySelectorAll('.project-nav-item').forEach(b =>
-    b.addEventListener('click', () => {
-      const pid = Number(b.dataset.pid);
-      expandedProjects.add(pid);
-      navigate('project', pid);
-    })
-  );
-  el.querySelectorAll('.project-nav-chevron').forEach(btn =>
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const pid = Number(btn.dataset.pid);
-      if (expandedProjects.has(pid)) expandedProjects.delete(pid);
-      else expandedProjects.add(pid);
-      renderSidebarProjects();
-    })
-  );
-  el.querySelectorAll('.board-nav-item').forEach(btn =>
-    btn.addEventListener('click', () => navigateToBoard(Number(btn.dataset.pid), Number(btn.dataset.bid)))
-  );
+  el.querySelectorAll('.project-nav-item').forEach(b => b.addEventListener('click', () => {
+    const pid = Number(b.dataset.pid);
+    expandedProjects.add(pid);
+    navigate('project-overview', pid);
+  }));
+  el.querySelectorAll('.project-nav-chevron').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const pid = Number(btn.dataset.pid);
+    if (expandedProjects.has(pid)) expandedProjects.delete(pid); else expandedProjects.add(pid);
+    renderSidebarProjects();
+  }));
+  el.querySelectorAll('.folder-nav-item').forEach(btn => btn.addEventListener('click', () => {
+    navigate('folder-tasks', Number(btn.dataset.pid), Number(btn.dataset.fid));
+  }));
+  el.querySelectorAll('.folder-nav-chevron').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    btn.classList.toggle('expanded');
+    const children = btn.closest('.folder-nav-group').querySelector('.folder-nav-children');
+    if (children) children.classList.toggle('hidden');
+  }));
+  el.querySelectorAll('.board-nav-item').forEach(btn => btn.addEventListener('click', () => {
+    navigate('board-view', Number(btn.dataset.pid), null, Number(btn.dataset.bid));
+  }));
+  el.querySelectorAll('.btn-add-folder-sidebar').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    const pid = Number(btn.dataset.pid);
+    const name = prompt('Folder name:'); if (!name) return;
+    const f = await invoke('create_folder', { projectId: pid, parentId: null, name });
+    if (!allFolders[pid]) allFolders[pid] = [];
+    allFolders[pid].push(f);
+    renderSidebarProjects();
+  }));
+  el.querySelectorAll('.btn-add-board-sidebar').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    const pid = Number(btn.dataset.pid);
+    const name = prompt('Board name:', 'My Board'); if (!name) return;
+    const b = await invoke('create_board', { projectId: pid, name });
+    allBoards.push(b);
+    navigate('board-view', pid, null, b.id);
+  }));
+}
+
+function buildProjInner(pid, rootFolders, projBoards) {
+  const allF = allFolders[pid] || [];
+  const folderHtml = rootFolders.length ? `
+    <div class="proj-nav-section">
+      <div class="proj-nav-section-label">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        Folders
+        <button class="btn-add-folder-sidebar" data-pid="${pid}" title="Add folder">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+      ${renderSidebarFolderNodes(allF, rootFolders, pid, 0)}
+    </div>` : `
+    <div class="proj-nav-section">
+      <button class="proj-nav-add-item btn-add-folder-sidebar" data-pid="${pid}">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Folder
+      </button>
+    </div>`;
+
+  const boardHtml = projBoards.length ? `
+    <div class="proj-nav-section">
+      <div class="proj-nav-section-label">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+        Boards
+        <button class="btn-add-board-sidebar" data-pid="${pid}" title="Add board">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+      ${projBoards.map(b => `
+        <button class="board-nav-item${currentBoardId === b.id && currentView === 'board-view' ? ' active' : ''}" data-pid="${pid}" data-bid="${b.id}">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+          <span class="board-nav-name">${esc(b.name)}</span>
+          <span class="board-nav-col-count">${b.columns ? b.columns.length : 0}</span>
+        </button>`).join('')}
+    </div>` : `
+    <div class="proj-nav-section">
+      <button class="proj-nav-add-item btn-add-board-sidebar" data-pid="${pid}">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Board
+      </button>
+    </div>`;
+
+  return `<div class="proj-nav-inner">${folderHtml}${boardHtml}</div>`;
+}
+
+function renderSidebarFolderNodes(allF, list, pid, depth) {
+  return list.map(f => {
+    const children = allF.filter(x => x.parent_id === f.id);
+    const fTaskCount = tasks.filter(t => t.folder_id === f.id).length;
+    const isActive = currentFolderId === f.id && currentView === 'folder-tasks';
+    return `<div class="folder-nav-group">
+      <div class="folder-nav-row${isActive ? ' active' : ''}" style="padding-left:${depth * 10}px">
+        ${children.length
+          ? `<button class="folder-nav-chevron" data-fid="${f.id}"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></button>`
+          : '<span class="folder-nav-spacer"></span>'}
+        <button class="folder-nav-item" data-pid="${pid}" data-fid="${f.id}">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span class="folder-nav-name">${esc(f.name)}</span>
+          ${fTaskCount ? `<span class="folder-nav-count">${fTaskCount}</span>` : ''}
+        </button>
+      </div>
+      ${children.length ? `<div class="folder-nav-children hidden">${renderSidebarFolderNodes(allF, children, pid, depth + 1)}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
@@ -197,30 +311,27 @@ function renderStats() {
     ${overdue?`<div class="stat-sep"></div><div class="stat-item"><span class="stat-num danger">${overdue}</span><span class="stat-label">Overdue</span></div>`:''}`;
 }
 
-// ─── Task cards ───────────────────────────────────────────────────────────────
-function applyFilter(list, f) { return f==='active'?list.filter(t=>!t.completed):f==='completed'?list.filter(t=>t.completed):list; }
+// ─── Task list helpers ────────────────────────────────────────────────────────
+function applyFilter(taskArr, f) {
+  if (f === 'active') return taskArr.filter(t => !t.completed);
+  if (f === 'completed') return taskArr.filter(t => t.completed);
+  return taskArr;
+}
 
-function taskCardHTML(task, showProject=true) {
-  const proj = task.project_id ? projects.find(p=>p.id===task.project_id) : null;
-  const due  = dueMeta(task.due_date);
-  const desc = stripMd(task.description);
-  return `<div class="task-card${task.completed?' done':''}${selectedTaskId===task.id?' selected':''}" data-id="${task.id}">
-    <div class="task-check${task.completed?' checked':''}" data-check="${task.id}"></div>
+function taskCardHTML(t, showProject) {
+  const proj = t.project_id ? projects.find(p => p.id === t.project_id) : null;
+  const folder = t.folder_id ? (Object.values(allFolders).flat()).find(f => f.id === t.folder_id) : null;
+  const priColor = t.priority === 'high' ? '#f87171' : t.priority === 'medium' ? '#fbbf24' : '#4ade80';
+  return `<div class="task-card${t.completed ? ' done' : ''}" data-id="${t.id}" style="--pri-color:${priColor}${proj ? ';--proj-color:' + proj.color : ''}">
+    <span class="task-check${t.completed ? ' checked' : ''}" data-check="${t.id}"></span>
     <div class="task-body">
-      <div class="task-title-row">
-        <span class="task-title${task.completed?' done':''}">${esc(task.title)}</span>
-        <span class="task-id">${task.task_id}</span>
-        <span class="badge ${task.priority}">${task.priority}</span>
+      <div class="task-title">${esc(t.title)}</div>
+      <div class="task-meta">
+        ${t.due_date ? `<span class="task-due${!t.completed && new Date(t.due_date) < new Date() ? ' overdue' : ''}">${fmtDateTime(t.due_date)}</span>` : ''}
+        <span class="badge ${t.priority}">${t.priority}</span>
+        ${proj && showProject ? `<span class="task-proj-tag" style="background:color-mix(in srgb,${proj.color} 18%,transparent);color:${proj.color}">${esc(proj.name)}</span>` : ''}
+        ${folder ? `<span class="task-folder-tag">${esc(folder.name)}</span>` : ''}
       </div>
-      <div class="task-meta-row">
-        ${showProject&&proj?`<span class="project-chip" style="background:${proj.color}18;color:${proj.color}"><span class="project-chip-dot" style="background:${proj.color}"></span>${esc(proj.name)}</span>`:''}
-        ${due?`<span class="due-chip ${due.cls}">${due.html}</span>`:''}
-        ${desc?`<span class="task-desc-preview">${esc(desc)}</span>`:''}
-      </div>
-    </div>
-    <div class="task-actions">
-      <button class="edit-btn" data-id="${task.id}" title="Edit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-      <button class="del-btn" data-id="${task.id}" title="Delete"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
     </div>
   </div>`;
 }
@@ -230,221 +341,318 @@ function attachCardListeners(container) {
     el.addEventListener('click', async e => {
       e.stopPropagation();
       const id = Number(el.dataset.check);
-      const done = await invoke('toggle_task',{id});
-      const t = tasks.find(t=>t.id===id); if(t) t.completed=done;
-      if(selectedTaskId===id) renderDetailPanel(tasks.find(t=>t.id===id));
-      renderCurrentView(); renderSidebarProjects();
-    });
-  });
-  container.querySelectorAll('.edit-btn').forEach(el => {
-    el.addEventListener('click', e => { e.stopPropagation(); openModal(tasks.find(t=>t.id===Number(el.dataset.id))); });
-  });
-  container.querySelectorAll('.del-btn').forEach(el => {
-    el.addEventListener('click', async e => {
-      e.stopPropagation();
-      const id = Number(el.dataset.id);
-      if (!confirm('Delete this task?')) return;
-      await invoke('delete_task',{id}); tasks=tasks.filter(t=>t.id!==id);
-      if(selectedTaskId===id) closeDetailPanel();
-      renderCurrentView(); renderSidebarProjects();
+      const done = await invoke('toggle_task', { id });
+      const t = tasks.find(x => x.id === id);
+      if (t) { t.completed = done; renderCurrentView(); }
     });
   });
   container.querySelectorAll('.task-card').forEach(card => {
     card.addEventListener('click', e => {
-      if(e.target.closest('.task-check,.edit-btn,.del-btn')) return;
-      const id=Number(card.dataset.id);
-      if(selectedTaskId===id){closeDetailPanel();return;}
-      selectedTaskId=id; openDetailPanel(tasks.find(t=>t.id===id));
-      document.querySelectorAll('.task-card').forEach(c=>c.classList.toggle('selected',Number(c.dataset.id)===id));
+      if (e.target.closest('.task-check')) return;
+      const t = tasks.find(x => x.id === Number(card.dataset.id));
+      if (t) { selectedTaskId = t.id; openDetailPanel(t); }
     });
   });
 }
 
-// ─── All Tasks View ───────────────────────────────────────────────────────────
 function renderTasks() {
   const filtered = applyFilter(tasks, filter);
   const list = $('task-list');
   if (!filtered.length) {
-    list.innerHTML=`<div class="empty-state"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><p>${filter==='completed'?'No completed tasks.':'No tasks yet!'}</p></div>`;
+    list.innerHTML = '<div class="empty-state"><p>No tasks yet. Click "New Task" to get started.</p></div>';
     return;
   }
-  if (taskViewMode==='grouped') renderGrouped(list,filtered);
-  else { list.innerHTML=filtered.map(t=>taskCardHTML(t)).join(''); attachCardListeners(list); }
-}
-function renderGrouped(container, taskList) {
-  const byProject=new Map();
-  for(const t of taskList){const k=t.project_id??0;if(!byProject.has(k))byProject.set(k,[]);byProject.get(k).push(t);}
-  let html='';
-  for(const p of projects){if(byProject.has(p.id)){html+=`<div class="task-group-header"><span class="task-group-dot" style="background:${p.color}"></span><span>${esc(p.name)}</span><span class="task-group-count">${byProject.get(p.id).length}</span></div>`;html+=byProject.get(p.id).map(t=>taskCardHTML(t,false)).join('');}}
-  if(byProject.has(0)){html+=`<div class="task-group-header"><span>No Project</span><span class="task-group-count">${byProject.get(0).length}</span></div>`;html+=byProject.get(0).map(t=>taskCardHTML(t)).join('');}
-  if(!html){container.innerHTML='<div class="empty-state"><p>No tasks.</p></div>';return;}
-  container.innerHTML=html; attachCardListeners(container);
-}
-
-// ─── Project View ─────────────────────────────────────────────────────────────
-async function renderProjectView(pid) {
-  const proj = projects.find(p=>p.id===pid);
-  if (!proj) { navigate('tasks'); return; }
-
-  // Load folders and boards for this project
-  [folders, boards] = await Promise.all([
-    invoke('get_folders',{projectId:pid}),
-    invoke('get_boards',{projectId:pid}),
-  ]);
-  // Sync allBoards so the sidebar stays current
-  allBoards = allBoards.filter(b => b.project_id !== pid).concat(boards);
-  if (!currentBoardId && boards.length) currentBoardId = boards[0].id;
-
-  // Project header
-  const projTasks=tasks.filter(t=>t.project_id===pid);
-  const done=projTasks.filter(t=>t.completed).length, total=projTasks.length;
-  const pct=total>0?Math.round(done/total*100):0;
-  $('project-view-header').innerHTML=`
-    <div class="pvh-color-bar" style="background:${proj.color}"></div>
-    <div class="pvh-body">
-      <div class="pvh-left">
-        <div class="pvh-title"><span class="pvh-dot" style="background:${proj.color}"></span><h2>${esc(proj.name)}</h2></div>
-        ${proj.description?`<p class="pvh-desc">${esc(proj.description)}</p>`:''}
-        <div class="pvh-stats"><span>${total} tasks · ${done} done · ${total-done} active</span><div class="pvh-progress"><div class="pvh-progress-fill" style="width:${pct}%;background:${proj.color}"></div></div><span>${pct}%</span></div>
-      </div>
-      <div class="pvh-actions">
-        <button class="btn-secondary btn-sm" id="pvh-edit">Edit</button>
-        <button class="btn-danger btn-sm" id="pvh-del">Delete</button>
-      </div>
-    </div>`;
-  $('pvh-edit').addEventListener('click',()=>openProjectModal(proj.id));
-  $('pvh-del').addEventListener('click',()=>deleteProject(proj.id));
-
-  // Folder tree
-  renderFolderTree(pid);
-  populateFolderSelector(pid);
-
-  // Tasks tab
-  renderProjectTaskList(pid);
-
-  // Board tab
-  renderBoardTab();
-}
-
-function renderProjectTaskList(pid) {
-  const folderFiltered = currentFolderId
-    ? tasks.filter(t=>t.project_id===pid && t.folder_id===currentFolderId)
-    : tasks.filter(t=>t.project_id===pid);
-  const filtered=applyFilter(folderFiltered, projectFilter);
-  const list=$('project-task-list');
-  if(!filtered.length){list.innerHTML=`<div class="empty-state"><p>No tasks${projectFilter!=='all'?' matching filter':currentFolderId?' in this folder':' in this project'}.</p></div>`;return;}
-  list.innerHTML=filtered.map(t=>taskCardHTML(t,false)).join('');
+  if (taskViewMode === 'grouped') {
+    const grouped = {};
+    filtered.forEach(t => {
+      const key = t.project_id || '__none__';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(t);
+    });
+    let html = '';
+    if (grouped['__none__']) {
+      html += `<div class="task-group"><div class="task-group-hdr">No Project</div>
+        ${grouped['__none__'].map(t => taskCardHTML(t, false)).join('')}</div>`;
+    }
+    projects.forEach(p => {
+      if (grouped[p.id]) {
+        html += `<div class="task-group">
+          <div class="task-group-hdr" style="color:${p.color}">
+            <span class="task-group-dot" style="background:${p.color}"></span>${esc(p.name)}
+          </div>
+          ${grouped[p.id].map(t => taskCardHTML(t, false)).join('')}
+        </div>`;
+      }
+    });
+    list.innerHTML = html;
+  } else {
+    list.innerHTML = filtered.map(t => taskCardHTML(t, true)).join('');
+  }
   attachCardListeners(list);
 }
 
-// no-op: tabs replaced by always-visible sections
-function switchProjTab(_tab) {}
+// ─── Project Overview ─────────────────────────────────────────────────────────
+function renderProjectOverview(pid) {
+  const proj = projects.find(p => p.id === pid); if (!proj) return;
+  const projTasks = tasks.filter(t => t.project_id === pid);
+  const done = projTasks.filter(t => t.completed).length;
+  const active = projTasks.filter(t => !t.completed).length;
+  const overdue = projTasks.filter(t => !t.completed && t.due_date && new Date(t.due_date) < new Date()).length;
+  const pct = projTasks.length ? Math.round(done / projTasks.length * 100) : 0;
+  const projFolders = allFolders[pid] || [];
+  const projBoards = allBoards.filter(b => b.project_id === pid);
 
-// ─── Folder tree ──────────────────────────────────────────────────────────────
-function renderFolderTree(pid) {
-  const tree = $('folder-tree');
-  const count = tasks.filter(t=>t.project_id===pid).length;
-  let html = `<button class="all-tasks-btn${!currentFolderId?' active':''}" id="btn-all-folder-tasks">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    All Tasks <span style="margin-left:auto;opacity:.6">${count}</span>
-  </button>`;
-  const roots=folders.filter(f=>!f.parent_id);
-  html+=renderFolderNodes(roots,pid,0);
-  tree.innerHTML=html;
-
-  tree.querySelector('#btn-all-folder-tasks').addEventListener('click',()=>{
-    currentFolderId=null;
-    tree.querySelectorAll('.all-tasks-btn').forEach(b=>b.classList.add('active'));
-    tree.querySelectorAll('.folder-item').forEach(b=>b.classList.remove('active'));
-    renderProjectTaskList(pid);
-  });
-  tree.querySelectorAll('.folder-btn[data-fid]').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      currentFolderId=Number(btn.dataset.fid);
-      tree.querySelectorAll('.all-tasks-btn').forEach(b=>b.classList.remove('active'));
-      tree.querySelectorAll('.folder-item').forEach(b=>b.classList.toggle('active',Number(b.dataset.fid)===currentFolderId));
-      renderProjectTaskList(pid);
-    });
-  });
-  tree.querySelectorAll('.add-subfolder-btn').forEach(btn=>{
-    btn.addEventListener('click', async e => {
-      e.stopPropagation();
-      const name=prompt('Subfolder name:'); if(!name) return;
-      const f=await invoke('create_folder',{projectId:pid,parentId:Number(btn.dataset.parent),name});
-      folders.push(f); renderFolderTree(pid); populateFolderSelector(pid);
-    });
-  });
-  tree.querySelectorAll('.rename-f-btn').forEach(btn=>{
-    btn.addEventListener('click', async e => {
-      e.stopPropagation();
-      const id=Number(btn.dataset.fid);
-      const f=folders.find(f=>f.id===id); if(!f) return;
-      const name=prompt('Rename folder:',f.name); if(!name||name===f.name) return;
-      const upd=await invoke('rename_folder',{id,name});
-      const i=folders.findIndex(x=>x.id===id); if(i!==-1) folders[i]=upd;
-      renderFolderTree(pid); populateFolderSelector(pid);
-    });
-  });
-  tree.querySelectorAll('.del-f-btn').forEach(btn=>{
-    btn.addEventListener('click', async e => {
-      e.stopPropagation();
-      const id=Number(btn.dataset.fid);
-      const f=folders.find(x=>x.id===id);
-      if(!confirm(`Delete folder "${f?.name}"? Tasks will be unlinked.`)) return;
-      await invoke('delete_folder',{id});
-      folders=folders.filter(x=>x.id!==id);
-      tasks.forEach(t=>{if(t.folder_id===id)t.folder_id=null;});
-      if(currentFolderId===id) currentFolderId=null;
-      renderFolderTree(pid); populateFolderSelector(pid); renderProjectTaskList(pid);
-    });
-  });
-}
-
-function renderFolderNodes(list,pid,depth) {
-  return list.map(f=>{
-    const kids=folders.filter(x=>x.parent_id===f.id);
-    const count=tasks.filter(t=>t.project_id===pid&&t.folder_id===f.id).length;
-    const indent=depth*14;
-    return `<div class="folder-item${currentFolderId===f.id?' active':''}" data-fid="${f.id}" style="padding-left:${indent}px">
-      <button class="folder-btn" data-fid="${f.id}">
-        <svg class="folder-chevron${kids.length?'':' hidden'}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        <span class="folder-name">${esc(f.name)}</span>
-        <span style="font-size:10px;color:var(--text2);opacity:.7">${count||''}</span>
-      </button>
-      <div class="folder-item-actions">
-        <button class="add-subfolder-btn" data-parent="${f.id}" title="Add subfolder"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-        <button class="rename-f-btn" data-fid="${f.id}" title="Rename"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="del-f-btn" data-fid="${f.id}" title="Delete"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+  $('proj-ov-content').innerHTML = `
+    <div class="pov-header" style="--proj-color:${proj.color}">
+      <div class="pov-header-body">
+        <div class="pov-title">${esc(proj.name)}</div>
+        ${proj.description ? `<div class="pov-desc">${esc(proj.description)}</div>` : ''}
+        <div class="pov-progress-row">
+          <div class="pov-progress-bar-wrap"><div class="pov-progress-fill" style="width:${pct}%;background:${proj.color}"></div></div>
+          <span class="pov-pct">${pct}%</span>
+        </div>
+      </div>
+      <div class="pov-header-actions">
+        <button class="btn-secondary btn-sm" id="pov-edit-btn">Edit</button>
+        <button class="btn-danger btn-sm" id="pov-del-btn">Delete</button>
       </div>
     </div>
-    ${kids.length?`<div class="folder-children">${renderFolderNodes(kids,pid,depth+1)}</div>`:''}`;
-  }).join('');
-}
 
-// ─── Board view ───────────────────────────────────────────────────────────────
-function renderBoardTab() {
-  const hasBoards = boards.length > 0;
-  $('board-canvas').classList.toggle('hidden', !hasBoards);
-  $('board-empty').classList.toggle('hidden', hasBoards);
-  const actions = $('board-section-actions');
-  actions.querySelectorAll('select,button:not(#btn-new-board)').forEach(el => {
-    el.style.display = hasBoards ? '' : 'none';
+    <div class="pov-stats">
+      <div class="pov-stat-card accent" style="--proj-color:${proj.color}">
+        <span class="pov-stat-num">${projTasks.length}</span>
+        <span class="pov-stat-label">Total Tasks</span>
+      </div>
+      <div class="pov-stat-card">
+        <span class="pov-stat-num" style="color:#4ade80">${done}</span>
+        <span class="pov-stat-label">Completed</span>
+      </div>
+      <div class="pov-stat-card">
+        <span class="pov-stat-num">${active}</span>
+        <span class="pov-stat-label">Active</span>
+      </div>
+      <div class="pov-stat-card">
+        <span class="pov-stat-num" style="color:${overdue ? '#f87171' : 'var(--text2)'}">${overdue}</span>
+        <span class="pov-stat-label">Overdue</span>
+      </div>
+    </div>
+
+    <div class="pov-grid">
+      <div class="pov-card">
+        <div class="pov-card-hdr">
+          <div class="pov-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Folders
+          </div>
+          <button class="btn-sm btn-secondary pov-add-folder-btn" data-pid="${pid}">+ Add</button>
+        </div>
+        <div class="pov-card-body" id="pov-folders-list">
+          ${projFolders.filter(f => !f.parent_id).length
+            ? projFolders.filter(f => !f.parent_id).map(f => {
+                const fc = tasks.filter(t => t.folder_id === f.id).length;
+                const sub = projFolders.filter(x => x.parent_id === f.id).length;
+                return `<div class="pov-item pov-folder-item" data-pid="${pid}" data-fid="${f.id}">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  <span class="pov-item-name">${esc(f.name)}</span>
+                  <span class="pov-item-count">${fc} task${fc !== 1 ? 's' : ''}${sub ? ` · ${sub} sub` : ''}</span>
+                </div>`;
+              }).join('')
+            : '<div class="pov-empty">No folders yet. Click "+ Add" to create one.</div>'}
+        </div>
+      </div>
+
+      <div class="pov-card">
+        <div class="pov-card-hdr">
+          <div class="pov-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+            Boards
+          </div>
+          <button class="btn-sm btn-secondary pov-add-board-btn" data-pid="${pid}">+ Add</button>
+        </div>
+        <div class="pov-card-body">
+          ${projBoards.length
+            ? projBoards.map(b => {
+                const bc = tasks.filter(t => b.columns && b.columns.some(c => c.id === t.board_column_id)).length;
+                return `<div class="pov-item pov-board-item" data-pid="${pid}" data-bid="${b.id}">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+                  <span class="pov-item-name">${esc(b.name)}</span>
+                  <span class="pov-item-count">${b.columns ? b.columns.length : 0} col${b.columns && b.columns.length !== 1 ? 's' : ''}</span>
+                </div>`;
+              }).join('')
+            : '<div class="pov-empty">No boards yet. Click "+ Add" to create one.</div>'}
+        </div>
+      </div>
+    </div>`;
+
+  $('pov-edit-btn').addEventListener('click', () => openProjectModal(pid));
+  $('pov-del-btn').addEventListener('click', () => deleteProject(pid));
+  $('proj-ov-content').querySelectorAll('.pov-folder-item').forEach(el =>
+    el.addEventListener('click', () => navigate('folder-tasks', Number(el.dataset.pid), Number(el.dataset.fid)))
+  );
+  $('proj-ov-content').querySelectorAll('.pov-board-item').forEach(el =>
+    el.addEventListener('click', () => navigate('board-view', Number(el.dataset.pid), null, Number(el.dataset.bid)))
+  );
+  $('proj-ov-content').querySelector('.pov-add-folder-btn').addEventListener('click', async () => {
+    const name = prompt('Folder name:'); if (!name) return;
+    const f = await invoke('create_folder', { projectId: pid, parentId: null, name });
+    if (!allFolders[pid]) allFolders[pid] = [];
+    allFolders[pid].push(f);
+    renderSidebarProjects(); renderProjectOverview(pid);
   });
-  if (!hasBoards) return;
-
-  const sel = $('board-selector');
-  sel.innerHTML = boards.map(b =>
-    `<option value="${b.id}"${b.id===currentBoardId?' selected':''}>${esc(b.name)}</option>`
-  ).join('');
-
-  const board = boards.find(b => b.id === currentBoardId) || boards[0];
-  if (!board) return;
-  currentBoardId = board.id;
-  renderBoard(board);
+  $('proj-ov-content').querySelector('.pov-add-board-btn').addEventListener('click', async () => {
+    const name = prompt('Board name:', 'My Board'); if (!name) return;
+    const b = await invoke('create_board', { projectId: pid, name });
+    allBoards.push(b);
+    navigate('board-view', pid, null, b.id);
+  });
 }
 
-const PRIORITY_COLORS = { high:'#f87171', medium:'#fbbf24', low:'#4ade80' };
+// ─── Folder Tasks View ────────────────────────────────────────────────────────
+function renderFolderView(fid) {
+  const folder = (Object.values(allFolders).flat()).find(f => f.id === fid); if (!folder) return;
+  const proj = projects.find(p => p.id === folder.project_id);
+  const folderPath = getFolderPath(folder.project_id, fid);
+
+  // Breadcrumb
+  const breadcrumb = [
+    proj ? `<span class="crumb" data-pid="${proj.id}">${esc(proj.name)}</span>` : '',
+    ...folderPath.slice(0, -1).map(f => `<span class="crumb" data-fid="${f.id}" data-pid="${proj ? proj.id : ''}">${esc(f.name)}</span>`),
+    `<span class="crumb-current">${esc(folder.name)}</span>`,
+  ].filter(Boolean).join('<span class="crumb-sep">›</span>');
+
+  $('folder-view-hdr').innerHTML = `
+    <div class="sub-view-breadcrumb">${breadcrumb}</div>
+    <div class="sub-view-hdr-actions">
+      <button class="btn-icon-sm rename-folder-btn" data-fid="${fid}" title="Rename">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </button>
+      <button class="btn-icon-sm add-subfolder-btn" data-fid="${fid}" data-pid="${folder.project_id}" title="Add subfolder">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+    </div>`;
+
+  // Breadcrumb clicks
+  $('folder-view-hdr').querySelectorAll('.crumb[data-pid]').forEach(el => {
+    el.addEventListener('click', () => navigate('project-overview', Number(el.dataset.pid)));
+  });
+  $('folder-view-hdr').querySelectorAll('.crumb[data-fid]').forEach(el => {
+    el.addEventListener('click', () => navigate('folder-tasks', Number(el.dataset.pid), Number(el.dataset.fid)));
+  });
+  $('folder-view-hdr').querySelector('.rename-folder-btn').addEventListener('click', async () => {
+    const name = prompt('New name:', folder.name); if (!name || name === folder.name) return;
+    const upd = await invoke('rename_folder', { id: fid, name });
+    const pid = folder.project_id;
+    if (allFolders[pid]) {
+      const i = allFolders[pid].findIndex(f => f.id === fid);
+      if (i !== -1) allFolders[pid][i] = upd;
+    }
+    renderSidebarProjects(); renderFolderView(fid);
+  });
+  $('folder-view-hdr').querySelector('.add-subfolder-btn').addEventListener('click', async () => {
+    const name = prompt('Subfolder name:'); if (!name) return;
+    const f = await invoke('create_folder', { projectId: folder.project_id, parentId: fid, name });
+    if (!allFolders[folder.project_id]) allFolders[folder.project_id] = [];
+    allFolders[folder.project_id].push(f);
+    renderSidebarProjects();
+    // Re-render current folder view to show subfolder
+    renderFolderView(fid);
+  });
+
+  // Subfolders
+  const subfolders = (allFolders[folder.project_id] || []).filter(f => f.parent_id === fid);
+
+  const folderTaskList = applyFilter(tasks.filter(t => t.folder_id === fid), folderFilter);
+  const list = $('folder-task-list');
+
+  let html = '';
+  if (subfolders.length) {
+    html += `<div class="folder-subfolders-row">` +
+      subfolders.map(sf => {
+        const sfc = tasks.filter(t => t.folder_id === sf.id).length;
+        return `<button class="subfolder-chip" data-pid="${folder.project_id}" data-fid="${sf.id}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          ${esc(sf.name)}<span style="opacity:.6;margin-left:4px">${sfc}</span>
+        </button>`;
+      }).join('') + '</div>';
+  }
+
+  if (!folderTaskList.length) {
+    html += `<div class="empty-state"><p>No tasks in this folder yet.</p></div>`;
+    list.innerHTML = html;
+  } else {
+    list.innerHTML = html + folderTaskList.map(t => taskCardHTML(t, false)).join('');
+    attachCardListeners(list);
+  }
+
+  list.querySelectorAll('.subfolder-chip').forEach(btn => btn.addEventListener('click', () =>
+    navigate('folder-tasks', Number(btn.dataset.pid), Number(btn.dataset.fid))
+  ));
+}
+
+function getFolderPath(pid, fid) {
+  const allF = allFolders[pid] || [];
+  const path = [];
+  let f = allF.find(x => x.id === fid);
+  while (f) { path.unshift(f); f = f.parent_id ? allF.find(x => x.id === f.parent_id) : null; }
+  return path;
+}
+
+// ─── Board view (full) ────────────────────────────────────────────────────────
+async function renderBoardView(bid) {
+  // Always reload fresh board data from server
+  let board = allBoards.find(b => b.id === bid);
+  const pid = board ? board.project_id : currentProjectId;
+  if (!pid && !board) return;
+  currentProjectId = pid;
+
+  const freshBoards = await invoke('get_boards', { projectId: pid });
+  allBoards = allBoards.filter(b => b.project_id !== pid).concat(freshBoards);
+  const freshBoard = freshBoards.find(b => b.id === bid);
+  if (!freshBoard) return;
+
+  const proj = projects.find(p => p.id === pid);
+
+  // Header
+  $('board-view-hdr').innerHTML = `
+    <div class="sub-view-breadcrumb">
+      ${proj ? `<span class="crumb" data-pid="${pid}">${esc(proj.name)}</span><span class="crumb-sep">›</span>` : ''}
+      <span class="crumb-current">${esc(freshBoard.name)}</span>
+    </div>
+    <div class="sub-view-hdr-actions">
+      <button class="btn-ghost btn-sm" id="btn-rename-board">Rename</button>
+      <button class="btn-danger btn-sm" id="btn-delete-board">Delete Board</button>
+      <button class="btn-primary btn-sm" id="btn-add-col">+ Column</button>
+    </div>`;
+
+  $('board-view-hdr').querySelector('.crumb[data-pid]')?.addEventListener('click', e =>
+    navigate('project-overview', Number(e.currentTarget.dataset.pid))
+  );
+  $('board-view-hdr').querySelector('#btn-rename-board').addEventListener('click', async () => {
+    const name = prompt('New name:', freshBoard.name); if (!name || name === freshBoard.name) return;
+    const upd = await invoke('rename_board', { id: bid, name });
+    const i = allBoards.findIndex(b => b.id === bid); if (i !== -1) allBoards[i] = upd;
+    renderSidebarProjects(); renderBoardView(bid);
+  });
+  $('board-view-hdr').querySelector('#btn-delete-board').addEventListener('click', async () => {
+    if (!await showConfirm(`Delete "${freshBoard.name}"?`, { title: 'Delete Board', okLabel: 'Delete Board' })) return;
+    await invoke('delete_board', { id: bid });
+    allBoards = allBoards.filter(b => b.id !== bid);
+    renderSidebarProjects();
+    navigate('project-overview', pid);
+  });
+  $('board-view-hdr').querySelector('#btn-add-col').addEventListener('click', () => openColModal());
+
+  // Render canvas
+  const hasColumns = freshBoard.columns && freshBoard.columns.length > 0;
+  $('board-canvas').classList.toggle('hidden', !hasColumns);
+  $('board-empty').classList.toggle('hidden', hasColumns);
+
+  if (hasColumns) {
+    renderBoard(freshBoard);
+  } else {
+    $('btn-board-add-first-col').onclick = () => openColModal();
+  }
+}
 
 function renderBoard(board) {
   const pid = currentProjectId;
@@ -525,7 +733,7 @@ function renderBoard(board) {
       // Optimistic update
       const i = tasks.findIndex(t => t.id === taskId);
       if (i !== -1) tasks[i] = { ...tasks[i], board_column_id: col.id };
-      const currentBoard = boards.find(b => b.id === currentBoardId) || board;
+      const currentBoard = allBoards.find(b => b.id === currentBoardId) || board;
       renderBoard(currentBoard);
       // Persist
       try {
@@ -537,7 +745,7 @@ function renderBoard(board) {
         console.error('move failed', err);
         // revert: reload tasks
         tasks = await invoke('get_tasks');
-        renderBoard(boards.find(b => b.id === currentBoardId) || board);
+        renderBoard(allBoards.find(b => b.id === currentBoardId) || board);
       }
     });
 
@@ -548,12 +756,12 @@ function renderBoard(board) {
       openColModal(col.id, col.name, col.color);
     });
     colEl.querySelector('.col-del-btn')?.addEventListener('click', async () => {
-      if (!confirm(`Delete column "${col.name}"? Tasks will become unassigned.`)) return;
+      if (!await showConfirm(`Delete column "${col.name}"? Tasks in this column will become unassigned.`, { title: 'Delete Column', okLabel: 'Delete Column' })) return;
       await invoke('delete_board_column', { id: col.id });
       tasks.forEach(t => { if (t.board_column_id === col.id) t.board_column_id = null; });
-      boards = await invoke('get_boards', { projectId: currentProjectId });
-      const b = boards.find(b => b.id === currentBoardId);
-      if (b) renderBoard(b); else renderBoardTab();
+      allBoards = allBoards.filter(b => b.project_id !== currentProjectId).concat(
+        await invoke('get_boards', { projectId: currentProjectId }));
+      renderSidebarProjects(); await renderBoardView(currentBoardId);
     });
 
     canvas.appendChild(colEl);
@@ -563,7 +771,7 @@ function renderBoard(board) {
 function makeBoardCard(task) {
   const due = dueMeta(task.due_date);
   const priColor = PRIORITY_COLORS[task.priority] || '#6b7280';
-  const folder = task.folder_id ? folders.find(f => f.id === task.folder_id) : null;
+  const folder = task.folder_id ? (Object.values(allFolders).flat()).find(f => f.id === task.folder_id) : null;
 
   const div = document.createElement('div');
   div.className = `board-card${task.completed ? ' done' : ''}`;
@@ -591,8 +799,8 @@ function makeBoardCard(task) {
     const i = tasks.findIndex(t => t.id === task.id);
     if (i !== -1) tasks[i].completed = done;
     if (selectedTaskId === task.id) renderDetailPanel(tasks[i]);
-    const currentBoard = boards.find(b => b.id === currentBoardId);
-    if (currentBoard) renderBoard(currentBoard);
+    const currentBoard = allBoards.find(b => b.id === currentBoardId);
+    if (currentBoard) renderBoard(currentBoard); else if (currentBoardId) await renderBoardView(currentBoardId);
     renderSidebarProjects();
   });
 
@@ -671,7 +879,7 @@ function renderDetailPanel(task) {
   });
   $('btn-edit-detail').onclick=()=>openModal(task);
   $('btn-delete-detail').onclick=async()=>{
-    if(!confirm('Delete this task?')) return;
+    if(!await showConfirm('This task will be permanently deleted.', { title: 'Delete Task', okLabel: 'Delete Task' })) return;
     await invoke('delete_task',{id:task.id}); tasks=tasks.filter(t=>t.id!==task.id);
     closeDetailPanel(); renderCurrentView(); renderSidebarProjects();
   };
@@ -710,37 +918,79 @@ function populateProjectSelector() {
   sel.value=cur;
 }
 function populateFolderSelector(pid) {
-  const sel=$('inp-folder-sel'),cur=sel.value;
-  sel.innerHTML='<option value="">No Folder</option>';
-  const pf=folders.filter(f=>f.project_id===pid);
-  function addOpts(list,depth){list.forEach(f=>{const o=document.createElement('option');o.value=f.id;o.textContent='  '.repeat(depth)+f.name;sel.appendChild(o);addOpts(pf.filter(x=>x.parent_id===f.id),depth+1);});}
-  addOpts(pf.filter(f=>!f.parent_id),0);
-  sel.value=cur;
-  $('folder-field').style.display=pid&&pf.length?'':'none';
+  const sel = $('inp-folder-sel'), cur = sel.value;
+  sel.innerHTML = '<option value="">No Folder</option>';
+  if (!pid) return;
+  const pf = (allFolders[pid] || []);
+  function addOpts(list, depth) {
+    list.forEach(f => {
+      const o = document.createElement('option');
+      o.value = f.id; o.textContent = '  '.repeat(depth) + f.name;
+      sel.appendChild(o);
+      addOpts(pf.filter(x => x.parent_id === f.id), depth + 1);
+    });
+  }
+  addOpts(pf.filter(f => !f.parent_id), 0);
+  sel.value = cur;
 }
-function openModal(task=null) {
-  editId=task?task.id:null; priority=task?task.priority:'medium';
-  const defPid=task?task.project_id:(currentView==='project'?currentProjectId:modalDefaultProjectId);
-  const defFid=task?task.folder_id:(currentFolderId??modalDefaultFolderId);
-  $('modal-title').textContent=task?'Edit Task':'New Task';
-  $('btn-submit').textContent=task?'Save Changes':'Add Task';
-  $('field-task-id').textContent=task?task.task_id:''; $('field-task-id').style.display=task?'inline-flex':'none';
-  $('inp-title').value=task?task.title:''; $('inp-desc').value=task?task.description:'';
-  $('inp-due').value=task&&task.due_date?toLocalInput(task.due_date):'';
-  $('inp-notify').value=String(task?task.notify_before_minutes:60);
-  $('inp-notify').disabled=!$('inp-due').value;
-  $('inp-project-sel').value=String(defPid??'');
-  populateFolderSelector(defPid); $('inp-folder-sel').value=String(defFid??'');
-  document.querySelectorAll('.priority-btn').forEach(b=>b.classList.toggle('active',b.dataset.p===priority));
-  $('task-form-error').classList.add('hidden'); setMdMode('write');
-  $('modal-overlay').classList.add('open'); $('inp-title').focus();
+function populateBoardColumnSelector(pid) {
+  const sel = $('inp-board-col-sel'), cur = sel.value;
+  sel.innerHTML = '<option value="">No Column</option>';
+  if (!pid) return;
+  const projBoards = allBoards.filter(b => b.project_id === pid);
+  for (const board of projBoards) {
+    if (!board.columns || !board.columns.length) continue;
+    const grp = document.createElement('optgroup');
+    grp.label = board.name;
+    for (const col of board.columns) {
+      const o = document.createElement('option');
+      o.value = col.id; o.textContent = col.name;
+      grp.appendChild(o);
+    }
+    sel.appendChild(grp);
+  }
+  sel.value = cur;
+}
+function updatePlacementField(pid) {
+  $('placement-field').style.display = pid ? '' : 'none';
+  if (pid) { populateFolderSelector(pid); populateBoardColumnSelector(pid); }
+}
+function openModal(task) {
+  task = task || null;
+  editId = task ? task.id : null;
+  priority = task ? task.priority : 'medium';
+  const defPid = task ? task.project_id : (currentView === 'project' ? currentProjectId : modalDefaultProjectId);
+  const defFid = task ? task.folder_id : (currentFolderId != null ? currentFolderId : modalDefaultFolderId);
+  const defColId = task ? task.board_column_id : modalDefaultColumnId;
+  $('modal-title').textContent = task ? 'Edit Task' : 'New Task';
+  $('btn-submit').textContent = task ? 'Save Changes' : 'Add Task';
+  $('field-task-id').textContent = task ? task.task_id : '';
+  $('field-task-id').style.display = task ? 'inline-flex' : 'none';
+  $('inp-title').value = task ? task.title : '';
+  $('inp-desc').value = task ? task.description : '';
+  $('inp-due').value = task && task.due_date ? toLocalInput(task.due_date) : '';
+  $('inp-notify').value = String(task ? task.notify_before_minutes : 60);
+  $('inp-notify').disabled = !$('inp-due').value;
+  $('inp-project-sel').value = String(defPid != null ? defPid : '');
+  updatePlacementField(defPid);
+  if (defFid) $('inp-folder-sel').value = String(defFid);
+  if (defColId) $('inp-board-col-sel').value = String(defColId);
+  document.querySelectorAll('.priority-btn').forEach(b => b.classList.toggle('active', b.dataset.p === priority));
+  $('task-form-error').classList.add('hidden');
+  setMdMode('write');
+  $('modal-overlay').classList.add('open');
+  $('inp-title').focus();
 }
 function closeModal() {
-  $('modal-overlay').classList.remove('open'); $('form-task').reset();
-  editId=null; priority='medium'; modalDefaultProjectId=null; modalDefaultFolderId=null; modalDefaultColumnId=null;
-  $('field-task-id').style.display='none'; $('inp-notify').disabled=true; $('folder-field').style.display='none';
+  $('modal-overlay').classList.remove('open');
+  $('form-task').reset();
+  editId = null; priority = 'medium';
+  modalDefaultProjectId = null; modalDefaultFolderId = null; modalDefaultColumnId = null;
+  $('field-task-id').style.display = 'none';
+  $('inp-notify').disabled = true;
+  $('placement-field').style.display = 'none';
   setMdMode('write');
-  document.querySelectorAll('.priority-btn').forEach(b=>b.classList.toggle('active',b.dataset.p==='medium'));
+  document.querySelectorAll('.priority-btn').forEach(b => b.classList.toggle('active', b.dataset.p === 'medium'));
 }
 
 // ─── Project modal ────────────────────────────────────────────────────────────
@@ -763,11 +1013,12 @@ function renderColorSwatches() {
 }
 async function deleteProject(id) {
   const p=projects.find(x=>x.id===id);
-  if(!p||!confirm(`Delete project "${p.name}"?`)) return;
+  if(!p) return; if(!await showConfirm(`All tasks and boards in "${p.name}" will also be removed.`, { title: 'Delete Project', okLabel: 'Delete Project' })) return;
   await invoke('delete_project',{id});
   projects=projects.filter(x=>x.id!==id); tasks.forEach(t=>{if(t.project_id===id)t.project_id=null;});
+  allBoards=allBoards.filter(b=>b.project_id!==id); delete allFolders[id];
   populateProjectSelector(); renderSidebarProjects();
-  if(currentProjectId===id) navigate('tasks');
+  if(currentProjectId===id) { currentProjectId=null; navigate('tasks'); }
 }
 
 // ─── Calendar ─────────────────────────────────────────────────────────────────
@@ -845,10 +1096,23 @@ document.addEventListener('DOMContentLoaded', () => {
   $('inp-due').addEventListener('change',()=>$('inp-notify').disabled=!$('inp-due').value);
   document.querySelectorAll('.md-tab').forEach(t=>t.addEventListener('click',()=>setMdMode(t.dataset.mode)));
 
-  // Project selector updates folder list
-  $('inp-project-sel').addEventListener('change',()=>{
-    const pid=$('inp-project-sel').value?parseInt($('inp-project-sel').value):null;
-    populateFolderSelector(pid);
+  // Confirm dialog
+  $('confirm-ok').addEventListener('click', () => _closeConfirm(true));
+  $('confirm-cancel').addEventListener('click', () => _closeConfirm(false));
+  $('confirm-overlay').addEventListener('click', e => { if (e.target === $('confirm-overlay')) _closeConfirm(false); });
+
+  // Project selector updates placement field
+  $('inp-project-sel').addEventListener('change', () => {
+    const pid = $('inp-project-sel').value ? parseInt($('inp-project-sel').value) : null;
+    updatePlacementField(pid);
+  });
+
+  // Placement field mutual exclusion: selecting folder clears board col and vice-versa
+  $('inp-folder-sel').addEventListener('change', () => {
+    if ($('inp-folder-sel').value) $('inp-board-col-sel').value = '';
+  });
+  $('inp-board-col-sel').addEventListener('change', () => {
+    if ($('inp-board-col-sel').value) $('inp-folder-sel').value = '';
   });
 
   // Task form submit
@@ -860,13 +1124,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const notifyBeforeMinutes=parseInt($('inp-notify').value,10);
     const projectId=$('inp-project-sel').value?parseInt($('inp-project-sel').value):null;
     const folderId=$('inp-folder-sel').value?parseInt($('inp-folder-sel').value):null;
-    const boardColumnId=modalDefaultColumnId||null;
+    const boardColumnId=$('inp-board-col-sel').value?parseInt($('inp-board-col-sel').value):null;
     const err=$('task-form-error');
     if(!title) return;
     err.classList.add('hidden'); btnSub.disabled=true; btnSub.textContent='Saving…';
     try {
       if(editId!==null) {
-        const upd=await invoke('update_task',{id:editId,title,description,priority,dueDate,notifyBeforeMinutes,projectId,folderId});
+        const upd=await invoke('update_task',{id:editId,title,description,priority,dueDate,notifyBeforeMinutes,projectId,folderId,boardColumnId});
         const i=tasks.findIndex(t=>t.id===editId); if(i!==-1) tasks[i]=upd;
         if(selectedTaskId===editId) renderDetailPanel(upd);
       } else {
@@ -911,53 +1175,7 @@ document.addEventListener('DOMContentLoaded', () => {
     finally{btn.disabled=false;btn.textContent=editingProjectId?'Save Changes':'Create Project';}
   });
 
-  // Project filter bar
-  $('project-filter-bar').querySelectorAll('.filter-btn').forEach(b=>b.addEventListener('click',()=>{
-    projectFilter=b.dataset.filter; $('project-filter-bar').querySelectorAll('.filter-btn').forEach(x=>x.classList.toggle('active',x.dataset.filter===projectFilter));
-    if(currentView==='project') renderProjectTaskList(currentProjectId);
-  }));
-  $('btn-add-project-task').addEventListener('click',()=>openModal());
-
-  // Project tabs
-  document.querySelectorAll('.proj-tab').forEach(b=>b.addEventListener('click',()=>switchProjTab(b.dataset.ptab)));
-
-  // Folder root add
-  $('btn-add-root-folder').addEventListener('click', async () => {
-    const name=prompt('Folder name:'); if(!name) return;
-    const f=await invoke('create_folder',{projectId:currentProjectId,parentId:null,name});
-    folders.push(f); renderFolderTree(currentProjectId); populateFolderSelector(currentProjectId);
-  });
-
-  // Board controls
-  $('board-selector').addEventListener('change',()=>{
-    currentBoardId=parseInt($('board-selector').value);
-    const b=boards.find(x=>x.id===currentBoardId); if(b) renderBoard(b);
-  });
-  $('btn-new-board').addEventListener('click', async ()=>{
-    const name=prompt('Board name:','My Board'); if(!name) return;
-    const b=await invoke('create_board',{projectId:currentProjectId,name});
-    boards.push(b); currentBoardId=b.id; renderBoardTab();
-  });
-  $('btn-create-first-board').addEventListener('click', async ()=>{
-    const name=prompt('Board name:','My Board'); if(!name) return;
-    const b=await invoke('create_board',{projectId:currentProjectId,name});
-    boards.push(b); currentBoardId=b.id; renderBoardTab();
-  });
-  $('btn-rename-board').addEventListener('click', async ()=>{
-    const b=boards.find(x=>x.id===currentBoardId); if(!b) return;
-    const name=prompt('New name:',b.name); if(!name||name===b.name) return;
-    const upd=await invoke('rename_board',{id:currentBoardId,name});
-    const i=boards.findIndex(x=>x.id===currentBoardId); if(i!==-1) boards[i]=upd;
-    renderBoardTab();
-  });
-  $('btn-delete-board').addEventListener('click', async ()=>{
-    const b=boards.find(x=>x.id===currentBoardId);
-    if(!b||!confirm(`Delete board "${b.name}"?`)) return;
-    await invoke('delete_board',{id:currentBoardId});
-    boards=boards.filter(x=>x.id!==currentBoardId);
-    currentBoardId=boards[0]?.id||null; renderBoardTab();
-  });
-  $('btn-add-col').addEventListener('click',()=>openColModal());
+  $('btn-add-col') && $('btn-add-col').addEventListener('click',()=>openColModal());
 
   // Column modal
   $('btn-close-col-modal').addEventListener('click',closeColModal);
@@ -974,16 +1192,29 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         await invoke('create_board_column',{boardId:currentBoardId,name,color});
       }
-      const updBoards=await invoke('get_boards',{projectId:currentProjectId});
-      boards=updBoards; const b=boards.find(x=>x.id===currentBoardId);
-      closeColModal(); if(b) renderBoard(b); else renderBoardTab();
+      allBoards = allBoards.filter(b => b.project_id !== currentProjectId).concat(
+        await invoke('get_boards', { projectId: currentProjectId }));
+      renderSidebarProjects(); closeColModal(); await renderBoardView(currentBoardId);
     } catch(e){err.textContent=String(e);err.classList.remove('hidden');}
     finally{btn.disabled=false;btn.textContent=editingColId?'Save':'Add Column';}
+  });
+
+  // Folder filter bar
+  $('folder-filter-bar').querySelectorAll('.filter-btn').forEach(b => b.addEventListener('click', () => {
+    folderFilter = b.dataset.filter;
+    $('folder-filter-bar').querySelectorAll('.filter-btn').forEach(x => x.classList.toggle('active', x.dataset.filter === folderFilter));
+    if (currentView === 'folder-tasks') renderFolderView(currentFolderId);
+  }));
+  $('btn-add-folder-task').addEventListener('click', () => {
+    modalDefaultFolderId = currentFolderId;
+    modalDefaultProjectId = currentProjectId;
+    openModal(null);
   });
 
   // Escape
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){
+      if(!$('confirm-overlay').classList.contains('hidden')){_closeConfirm(false);return;}
       if($('col-modal-overlay').classList.contains('open')){closeColModal();return;}
       if($('modal-overlay').classList.contains('open')){closeModal();return;}
       if($('project-modal-overlay').classList.contains('open')){closeProjectModal();return;}

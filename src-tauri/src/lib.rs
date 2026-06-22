@@ -207,15 +207,16 @@ fn delete_task(id: i64, state: State<AppState>) -> Result<(), String> {
 fn update_task(
     id: i64, title: String, description: String, priority: String,
     due_date: Option<String>, notify_before_minutes: i64,
-    project_id: Option<i64>, folder_id: Option<i64>,
+    project_id: Option<i64>, folder_id: Option<i64>, board_column_id: Option<i64>,
     state: State<AppState>,
 ) -> Result<Task, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
         "UPDATE tasks SET title=?1,description=?2,priority=?3,due_date=?4,
-                          notify_before_minutes=?5,notification_sent=0,project_id=?6,folder_id=?7
-         WHERE id=?8",
-        params![title,description,priority,due_date,notify_before_minutes,project_id,folder_id,id],
+                          notify_before_minutes=?5,notification_sent=0,project_id=?6,
+                          folder_id=?7,board_column_id=?8
+         WHERE id=?9",
+        params![title,description,priority,due_date,notify_before_minutes,project_id,folder_id,board_column_id,id],
     ).map_err(|e| e.to_string())?;
     record_history(&db, id, "edited", "");
     db.query_row(&format!("{} WHERE id=?1", TASK_SEL), params![id], row_to_task).map_err(|e| e.to_string())

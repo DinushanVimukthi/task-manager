@@ -159,73 +159,36 @@
           </div>
         </div>
 
-        <!-- Project Detail View -->
-        <div id="view-project" class="view hidden">
-          <div id="project-view-header" class="project-view-header"></div>
+        <!-- ── PROJECT OVERVIEW ── -->
+        <div id="view-project-overview" class="view hidden">
+          <div id="proj-ov-content" class="proj-ov-content"></div>
+        </div>
 
-          <div class="proj-sections">
-
-            <!-- ── TASKS SECTION ── -->
-            <div class="proj-section" id="proj-section-tasks">
-              <div class="proj-section-hdr">
-                <div class="proj-section-title">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-                  Tasks
-                </div>
-                <div class="proj-section-actions">
-                  <div class="filter-bar" id="project-filter-bar">
-                    <button class="filter-btn active" data-filter="all">All</button>
-                    <button class="filter-btn" data-filter="active">Active</button>
-                    <button class="filter-btn" data-filter="completed">Done</button>
-                  </div>
-                  <button id="btn-add-project-task" class="btn-primary btn-sm">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Add Task
-                  </button>
-                </div>
-              </div>
-              <div class="proj-section-body">
-                <div id="folder-panel" class="folder-panel">
-                  <div class="folder-panel-hdr">
-                    <span>Folders</span>
-                    <button id="btn-add-root-folder" class="btn-icon-sm" title="New folder">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    </button>
-                  </div>
-                  <div id="folder-tree" class="folder-tree"></div>
-                </div>
-                <div class="proj-task-area">
-                  <div id="project-task-list" class="task-list"></div>
-                </div>
-              </div>
+        <!-- ── FOLDER / SUBFOLDER TASKS ── -->
+        <div id="view-folder-tasks" class="view hidden">
+          <div id="folder-view-hdr" class="sub-view-hdr"></div>
+          <div class="sub-view-toolbar">
+            <div class="filter-bar" id="folder-filter-bar">
+              <button class="filter-btn active" data-filter="all">All</button>
+              <button class="filter-btn" data-filter="active">Active</button>
+              <button class="filter-btn" data-filter="completed">Done</button>
             </div>
+            <button id="btn-add-folder-task" class="btn-primary btn-sm">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Task
+            </button>
+          </div>
+          <div id="folder-task-list" class="task-list scroll-area"></div>
+        </div>
 
-            <!-- ── BOARDS SECTION ── -->
-            <div class="proj-section" id="proj-section-boards">
-              <div class="proj-section-hdr">
-                <div class="proj-section-title">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
-                  Boards
-                </div>
-                <div class="proj-section-actions" id="board-section-actions">
-                  <select id="board-selector" class="select-field board-sel"></select>
-                  <button id="btn-new-board" class="btn-secondary btn-sm">+ New Board</button>
-                  <button id="btn-rename-board" class="btn-ghost btn-sm">Rename</button>
-                  <button id="btn-delete-board" class="btn-danger btn-sm">Delete</button>
-                  <span class="toolbar-sep"></span>
-                  <button id="btn-add-col" class="btn-primary btn-sm">+ Column</button>
-                </div>
-              </div>
-              <div class="proj-section-board-body">
-                <div id="board-canvas" class="board-canvas"></div>
-                <div id="board-empty" class="board-empty hidden">
-                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
-                  <p>No boards yet. Create one to organize tasks visually.</p>
-                  <button id="btn-create-first-board" class="btn-primary">Create First Board</button>
-                </div>
-              </div>
-            </div>
-
+        <!-- ── BOARD KANBAN ── -->
+        <div id="view-board" class="view hidden">
+          <div id="board-view-hdr" class="sub-view-hdr"></div>
+          <div id="board-canvas" class="board-canvas"></div>
+          <div id="board-empty" class="board-empty hidden">
+            <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/></svg>
+            <p>No columns yet.</p>
+            <button id="btn-board-add-first-col" class="btn-primary">Add First Column</button>
           </div>
         </div>
 
@@ -273,7 +236,7 @@
         </select>
       </div>
       <div class="field" id="placement-field" style="display:none">
-        <label>Place In <span class="field-required-note">folder or board column required</span></label>
+        <label>Place In <span class="field-optional-note">optional</span></label>
         <div class="placement-row">
           <div class="placement-opt">
             <span class="placement-opt-label">
@@ -394,6 +357,25 @@
         <button type="submit" id="btn-submit-col" class="btn-primary">Add Column</button>
       </div>
     </form>
+  </div>
+</div>
+
+
+<!-- ── Confirm Dialog ── -->
+<div id="confirm-overlay" class="confirm-overlay hidden">
+  <div class="confirm-dialog" role="dialog" aria-modal="true">
+    <div class="confirm-icon-wrap" id="confirm-icon-wrap">
+      <svg id="confirm-icon-danger" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      <svg id="confirm-icon-warn" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hidden"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <div class="confirm-body">
+      <div class="confirm-title" id="confirm-title">Are you sure?</div>
+      <div class="confirm-message" id="confirm-message"></div>
+    </div>
+    <div class="confirm-actions">
+      <button class="btn-ghost" id="confirm-cancel">Cancel</button>
+      <button class="btn-danger" id="confirm-ok">Delete</button>
+    </div>
   </div>
 </div>
 

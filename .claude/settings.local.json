@@ -14,7 +14,13 @@
       "PowerShell(Stop-Process *)",
       "Bash(cargo build *)",
       "Bash(~/.cargo/bin/cargo build *)",
-      "Bash(~/.cargo/bin/cargo check *)"
+      "Bash(~/.cargo/bin/cargo check *)",
+      "Bash(python3 *)",
+      "Bash(npm run *)",
+      "Bash(cargo check *)",
+      "PowerShell(cargo check *)",
+      "PowerShell(node --check \"D:\\\\Personal\\\\task-manager\\\\src\\\\main.js\" 2>&1)",
+      "Bash(curl -s http://localhost:7331/)"
     ]
   }
 }
