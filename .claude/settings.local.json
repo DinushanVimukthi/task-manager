@@ -20,7 +20,8 @@
       "Bash(cargo check *)",
       "PowerShell(cargo check *)",
       "PowerShell(node --check \"D:\\\\Personal\\\\task-manager\\\\src\\\\main.js\" 2>&1)",
-      "Bash(curl -s http://localhost:7331/)"
+      "Bash(curl -s http://localhost:7331/)",
+      "Bash(node --check \"D:/Personal/task-manager/src/main.js\")"
     ]
   }
 }

@@ -1000,6 +1000,33 @@ textarea { resize: vertical; min-height: 80px; }
   from { opacity: 0; } to { opacity: 1; }
 }
 
+/* ─── Context Menu ──────────────────────────────────────────────────────────── */
+.ctx-menu {
+  position: fixed; z-index: 9999;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px;
+  min-width: 150px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12);
+  animation: ctxFadeIn .12s ease;
+}
+.ctx-menu.hidden { display: none; }
+@keyframes ctxFadeIn {
+  from { opacity: 0; transform: scale(.94) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 8px 12px;
+  background: none; border: none;
+  border-radius: 7px; font-size: 13px; font-weight: 500;
+  color: var(--text); cursor: pointer; text-align: left;
+  transition: background .1s;
+}
+.ctx-item:hover { background: var(--surface2); }
+.ctx-item.ctx-delete { color: #ef4444; }
+.ctx-item.ctx-delete:hover { background: rgba(239,68,68,.1); }
+.ctx-separator { height: 1px; background: var(--border); margin: 3px 4px; }
+
 /* ─── Placement field optional note ─────────────────────────────────────────── */
 .field-optional-note {
   font-size: 10px; font-weight: 500; letter-spacing: .04em;

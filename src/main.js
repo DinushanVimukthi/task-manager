@@ -12,6 +12,7 @@ let currentFolderId = null;
 let currentBoardId = null;
 let taskViewMode = 'flat';
 let selectedTaskId = null;
+let draggedTaskId = null;
 let editingProjectId = null, projectColor = '#7c6af7';
 let expandedProjects = new Set();
 let modalDefaultProjectId = null, modalDefaultFolderId = null, modalDefaultColumnId = null;
@@ -44,6 +45,71 @@ function showConfirm(message, { title = 'Are you sure?', okLabel = 'Delete', var
 function _closeConfirm(result) {
   $('confirm-overlay').classList.add('hidden');
   if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+}
+
+// ─── Context menu ─────────────────────────────────────────────────────────────
+let _ctxTarget = null; // { type: 'folder'|'board', id, pid, name }
+
+function showCtxMenu(x, y, target) {
+  _ctxTarget = target;
+  const menu = $('ctx-menu');
+  menu.classList.remove('hidden');
+  // Position, then clamp to viewport
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
+  requestAnimationFrame(() => {
+    const r = menu.getBoundingClientRect();
+    if (r.right  > window.innerWidth)  menu.style.left = (x - r.width)  + 'px';
+    if (r.bottom > window.innerHeight) menu.style.top  = (y - r.height) + 'px';
+  });
+}
+
+function hideCtxMenu() {
+  $('ctx-menu').classList.add('hidden');
+  _ctxTarget = null;
+}
+
+async function _ctxRename() {
+  const tgt = _ctxTarget;
+  hideCtxMenu();
+  if (!tgt) return;
+  const { type, id, pid, name } = tgt;
+  const newName = prompt(`Rename ${type}:`, name);
+  if (!newName || newName === name) return;
+  if (type === 'folder') {
+    const upd = await invoke('rename_folder', { id, name: newName });
+    const arr = allFolders[pid] || [];
+    const i = arr.findIndex(f => f.id === id);
+    if (i !== -1) arr[i] = upd;
+    renderSidebarProjects();
+    if (currentFolderId === id) renderFolderView(id);
+  } else {
+    const upd = await invoke('rename_board', { id, name: newName });
+    const i = allBoards.findIndex(b => b.id === id);
+    if (i !== -1) allBoards[i] = upd;
+    renderSidebarProjects();
+    if (currentBoardId === id) await renderBoardView(id);
+  }
+}
+
+async function _ctxDelete() {
+  const tgt = _ctxTarget;
+  hideCtxMenu();
+  if (!tgt) return;
+  const { type, id, pid, name } = tgt;
+  if (type === 'folder') {
+    if (!await showConfirm(`Delete folder "${name}"? All tasks inside will be unassigned.`, { title: 'Delete Folder', okLabel: 'Delete Folder' })) return;
+    await invoke('delete_folder', { id });
+    if (allFolders[pid]) allFolders[pid] = allFolders[pid].filter(f => f.id !== id);
+    renderSidebarProjects();
+    if (currentFolderId === id) navigate('project-overview', pid);
+  } else {
+    if (!await showConfirm(`Delete board "${name}"?`, { title: 'Delete Board', okLabel: 'Delete Board' })) return;
+    await invoke('delete_board', { id });
+    allBoards = allBoards.filter(b => b.id !== id);
+    renderSidebarProjects();
+    if (currentBoardId === id) navigate('project-overview', pid);
+  }
 }
 
 function fmtDateTime(iso) {
@@ -200,18 +266,34 @@ function renderSidebarProjects() {
     if (expandedProjects.has(pid)) expandedProjects.delete(pid); else expandedProjects.add(pid);
     renderSidebarProjects();
   }));
-  el.querySelectorAll('.folder-nav-item').forEach(btn => btn.addEventListener('click', () => {
-    navigate('folder-tasks', Number(btn.dataset.pid), Number(btn.dataset.fid));
-  }));
+  el.querySelectorAll('.folder-nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigate('folder-tasks', Number(btn.dataset.pid), Number(btn.dataset.fid));
+    });
+    btn.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      const pid = Number(btn.dataset.pid), fid = Number(btn.dataset.fid);
+      const folder = (allFolders[pid] || []).find(f => f.id === fid);
+      showCtxMenu(e.clientX, e.clientY, { type: 'folder', id: fid, pid, name: folder?.name || '' });
+    });
+  });
   el.querySelectorAll('.folder-nav-chevron').forEach(btn => btn.addEventListener('click', e => {
     e.stopPropagation();
     btn.classList.toggle('expanded');
     const children = btn.closest('.folder-nav-group').querySelector('.folder-nav-children');
     if (children) children.classList.toggle('hidden');
   }));
-  el.querySelectorAll('.board-nav-item').forEach(btn => btn.addEventListener('click', () => {
-    navigate('board-view', Number(btn.dataset.pid), null, Number(btn.dataset.bid));
-  }));
+  el.querySelectorAll('.board-nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigate('board-view', Number(btn.dataset.pid), null, Number(btn.dataset.bid));
+    });
+    btn.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      const pid = Number(btn.dataset.pid), bid = Number(btn.dataset.bid);
+      const board = allBoards.find(b => b.id === bid);
+      showCtxMenu(e.clientX, e.clientY, { type: 'board', id: bid, pid, name: board?.name || '' });
+    });
+  });
   el.querySelectorAll('.btn-add-folder-sidebar').forEach(btn => btn.addEventListener('click', async e => {
     e.stopPropagation();
     const pid = Number(btn.dataset.pid);
@@ -728,7 +810,8 @@ function renderBoard(board) {
     colEl.addEventListener('drop', async e => {
       e.preventDefault();
       colEl.classList.remove('drag-over');
-      const taskId = Number(e.dataTransfer.getData('text/plain'));
+      const taskId = draggedTaskId || Number(e.dataTransfer.getData('text/plain'));
+      draggedTaskId = null;
       if (!taskId) return;
       // Optimistic update
       const i = tasks.findIndex(t => t.id === taskId);
@@ -805,11 +888,12 @@ function makeBoardCard(task) {
   });
 
   div.addEventListener('dragstart', e => {
+    draggedTaskId = task.id;
     e.dataTransfer.setData('text/plain', String(task.id));
     e.dataTransfer.effectAllowed = 'move';
     requestAnimationFrame(() => div.classList.add('dragging'));
   });
-  div.addEventListener('dragend', () => div.classList.remove('dragging'));
+  div.addEventListener('dragend', () => { div.classList.remove('dragging'); });
   div.addEventListener('click', e => {
     if (e.target.closest('.board-card-check')) return;
     selectedTaskId = task.id;
@@ -1100,6 +1184,13 @@ document.addEventListener('DOMContentLoaded', () => {
   $('confirm-ok').addEventListener('click', () => _closeConfirm(true));
   $('confirm-cancel').addEventListener('click', () => _closeConfirm(false));
   $('confirm-overlay').addEventListener('click', e => { if (e.target === $('confirm-overlay')) _closeConfirm(false); });
+
+  // Context menu
+  $('ctx-rename').addEventListener('click', _ctxRename);
+  $('ctx-delete').addEventListener('click', _ctxDelete);
+  document.addEventListener('click', e => { if (!$('ctx-menu').contains(e.target)) hideCtxMenu(); });
+  document.addEventListener('contextmenu', e => { if (!$('ctx-menu').contains(e.target) && !e.target.closest('.folder-nav-item, .board-nav-item')) hideCtxMenu(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtxMenu(); });
 
   // Project selector updates placement field
   $('inp-project-sel').addEventListener('change', () => {
